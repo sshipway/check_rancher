@@ -8,6 +8,7 @@
 #            [-H hostname][-p port][-S][-U user -K key]
 #            [-T globaltimeout][-t fetchtimeout]
 #            [-E environment][-s stack]
+#            [-t itemlist]
 #
 
 use strict; 
@@ -35,8 +36,24 @@ my( $ENV,$STACK ) = ('','');
 my( $HOSTNAME, $PORT, $SSL ) = ('localhost',80,0);
 my( $ENDPOINT ) = "";
 my( $URL );
+my( $ITEMS ) = "cert,cpu,mem,disk,swap";
 
-use vars qw/$opt_h $opt_d $opt_M $opt_N $opt_H $opt_c $opt_U $opt_K $opt_T $opt_t $opt_E $opt_S $opt_s $opt_p/;
+my( %config ) = (
+	'cpu.warn' => 80, #percent used
+	'cpu.crit' => 90,
+	'mem.warn' => 90, #percent used
+	'mem.crit' => 99,
+	'disk.warn' => 80, #percent used
+	'disk.crit' => 90,
+	'load.warn' => 50, # 5min load average
+	'load.crit' => 100,
+	'swap.warn' => 1,  # pages
+	'swap.crit' => 10000,
+	'cert.warn' => 7,  # days remaining
+	'cert.crit' => 1,
+);
+
+use vars qw/$opt_i $opt_h $opt_d $opt_M $opt_N $opt_H $opt_c $opt_U $opt_K $opt_T $opt_t $opt_E $opt_S $opt_s $opt_p $opt_o $opt_f/;
 my( $ua );
 my( $res, $req ) = ('','');
 my($json,$content);
@@ -57,8 +74,9 @@ sub escape($) {
 
 sub output {
 	if($MRTG) {
+		$MESSAGE =~ s/\\n.*//;
 		print "$A\n$B\n\n$MESSAGE\n";
-		exit 0;
+		exit $STATUS;
 	} 
 
 	if(!$MESSAGE) { 
@@ -119,7 +137,7 @@ sub fetchurl($$) {
 }
 
 sub dohelp() {
-	print "Usage: check_rancher [-N]|-M][-d][-h]\n             [-c configfile]\n           [-H host][-p port][-S]\n            [-U user -P pass][-t timeout][-T globaltimeout]\n             [-E environment][-S stack]\n";
+	print "Usage: check_rancher [-N]|-M][-d][-h]\n             [-c configfile]\n           [-H host][-p port][-S][-U user -K key]\n             [-t timeout][-T globaltimeout]\n             [-E environment][-s stack]\n             [-i itemlist]";
 	print "-d : debug\n";
 	print "-M : MRTG mode\n";
 	print "-N : Nagios mode\n";
@@ -127,12 +145,14 @@ sub dohelp() {
 	print "-E : Rancher environment\n";
 	print "-s : Rancher stack\n";
 	print "-c : Specify configuration file\n";
+	print "-i : Comma-separated list of metric items to check. Can include:\n";
+	print "     certificates,cpu,memory,disk,swap\n";
+	print "     This only applies to Environment checks.\n";
 	exit 3;
 }
 
 sub readconfig($) {
 	my($file) = $_[0];
-	my(%config) = ();
 	if(! -r $file) {
 		$MESSAGE = "Unable to read $file";
 		$STATUS = 3;
@@ -160,29 +180,57 @@ sub readconfig($) {
 	$HOSTNAME = $config{hostname} if(defined $config{hostname});
 	$PORT     = $config{port}     if(defined $config{port});
 	$USERNAME = $config{username} if(defined $config{username});
-	$PASSWORD = $config{key} if(defined $config{key});
+	$PASSWORD = $config{key}      if(defined $config{key});
 	$ENV      = $config{environment} if(defined $config{environment});
-	$SSL      = $config{ssl} if(defined $config{ssl});
+	$SSL      = $config{ssl}      if(defined $config{ssl});
+	$STACK    = $config{stack}    if(defined $config{stack});
 }
 
 ########################################################################
-sub checkenv($) {
+sub getthresh($$) {
+	my($type) = lc $_[0];
+	my($obj) = $_[1];
+	my($warn,$crit)=(-1,-1);
+
+	# Defaults as in config
+	$warn = $config{"$type.warn"} if(defined $config{"$type.warn"});
+	$crit = $config{"$type.crit"} if(defined $config{"$type.crit"});
+
+	# Any override in the labels?
+	if($obj and $obj->{labels}) {
+		$warn = $obj->{labels}{"nagios.$type.warn"}
+			if(defined $obj->{labels}{"nagios.$type.warn"});
+		$crit = $obj->{labels}{"nagios.$type.crit"}
+			if(defined $obj->{labels}{"nagios.$type.crit"});
+	}
+
+	return ($warn,$crit);
+}
+
+########################################################################
+sub checkenv($$) {
 	my( $data ) = $_[0];
+	my( $host ) = $_[1];
 	my( $envid ) = $data->{id};
 	my($json,$url);
+	my( $w, $c );
+	my( $totcpu, $totmem, $numhosts ) = (0,0);
 
 	$STATUS = 0;
-	$MESSAGE = "Environment OK";
+	$MESSAGE = "";
 
 	print "-- Checking status\n" if($DEBUG);
 
 	if( $data->{state} ne "active" ) {
-		$STATUS = 2;
+		if( $data->{state} =~ /activating|registering|requested|updating/ ) {
+			$STATUS = 1;
+		} else { $STATUS = 2; }
 		$MESSAGE = "Environment status: ".$data->{state};
 		return;
 	}
 
 	print "-- Checking hosts\n" if($DEBUG);
+	$MESSAGE = "Environment status: ".$data->{state};
 	# Retrieve hosts data
 	$url = "$ENDPOINT/projects/$envid/hosts/";
 	$json = decode_json( fetchurl( $url, '' ) );
@@ -194,18 +242,130 @@ sub checkenv($) {
 	foreach my $idx ( 0..$#{$json->{data}} ) {
 		my $state = $json->{data}[$idx]{state};
 		my $name = $json->{data}[$idx]{name};
+		my $v;
 
 		next if($state eq "inactive"); # skip inactive hosts
+		next if($host and ($name ne $host)); # selected host only
 	
 		# Check attributes of host
 		my $info = $json->{data}[$idx]{info};
+		$numhosts += 1;
 		
-		# CPU usage threshold; take avg of all cores
-		# MEM usage threshold; use %
-		# loadAvg 5min threshold
-		# Disk thresholds; use % on each disk
+		if($ITEMS =~ /cpu/) {
+			# CPU usage threshold; take avg of all cores
+			($w,$c) = getthresh("cpu",$json->{data}[$idx]);
+			$v = 0;
+			foreach ( @{$info->{cpuInfo}{cpuCoresPercentages}} ) {
+				$v += $_;
+			}
+			$v /= $info->{cpuInfo}{count};
+			$totcpu += $v;
+			$v = (int($v*100))/100;
+			if(!$MRTG) {
+			if( $v >= $c ) {
+				$MESSAGE .= "\\nCRIT: Host $name: CPU $v\%";
+				$STATUS = 2;
+			} elsif( $v >= $w ) {
+				$MESSAGE .= "\\nWARN: Host $name: CPU $v\%";
+				$STATUS = 1 if(!$STATUS);
+			}
+			}
+			if($host) {
+				$PERFSTATS .= "cpu=$v\%;$w;$c;0;100 ";
+			}
+			if($DEBUG) { print "Host $name: CPU = $v\%\n"; }
+		}
+		if($ITEMS =~ /mem/) {
+			# MEM usage threshold; use %
+			($w,$c) = getthresh("mem",$json->{data}[$idx]);
+			$v = 100.0 - (($info->{memoryInfo}{memFree}/$info->{memoryInfo}{memTotal})*100.0);
+			$totmem += $v;
+			$v = (int($v*100))/100;
+			if(!$MRTG) {
+			if( $v >= $c ) {
+				$MESSAGE .= "\\nCRIT: Host $name: Memory $v\%";
+				$STATUS = 2;
+			} elsif( $v >= $w ) {
+				$MESSAGE .= "\\nWARN: Host $name: Memory $v\%";
+				$STATUS = 1 if(!$STATUS);
+			}
+			} 
+			if($host) {
+				$PERFSTATS .= "mem=$v\%;$w;$c;0;100 ";
+			}
+			if($DEBUG) { print "Host $name: Memory = $v\%\n"; }
+		}
+		if($ITEMS =~ /load/ ) {
+			# loadAvg 5min threshold
+			($w,$c) = getthresh("load",$json->{data}[$idx]);
+			$v = $info->{cpuInfo}{loadAvg}[1];
+			if(!$MRTG) {
+			if( $v >= $c ) {
+				$MESSAGE .= "\\nCRIT: Host $name: LoadAvg $v";
+				$STATUS = 2;
+			} elsif( $v >= $w ) {
+				$MESSAGE .= "\\nWARN: Host $name: LoadAvg $v";
+				$STATUS = 1 if(!$STATUS);
+			}
+			}
+			if($host) {
+				$A = $v; $B = 'U';
+				$PERFSTATS .= "load=$v;$w;$c;0; ";
+			}
+			if($DEBUG) { print "Host $name: LoadAvg = $v\n"; }
+		}
+		if($ITEMS =~ /swap/ and !$MRTG) {
+			# swap threshold
+			($w,$c) = getthresh("swap",$json->{data}[$idx]);
+		}
+		if($ITEMS =~ /disk/ and !$MRTG) {
+			my(@patterns,$exclude);
+			# Disk thresholds; use % on each disk
+			($w,$c) = getthresh("disk",$json->{data}[$idx]);
+			$exclude = $config{"disk.exclude"};
+			$exclude = $json->{data}[$idx]{labels}{"nagios.disk.exclude"}
+				if(defined $json->{data}[$idx]{labels}{"nagios.disk.exclude"});
+			$exclude = "" if(!$exclude);
+			@patterns = split( /\s*,\s*/,$exclude );
+DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
+				$v = $info->{diskInfo}{mountPoints}{$disk}{percentUsed};
+				foreach ( @patterns ) {
+					next DISK if( $disk =~ /$_/ );
+				}
+				if( $v >= $c ) {
+					$MESSAGE .= "\\nCRIT: Host $name: $disk: Used $v\%";
+					$STATUS = 2;
+				} elsif( $v >= $w ) {
+					$MESSAGE .= "\\nWARN: Host $name: $disk: Used $v\%";
+					$STATUS = 1 if(!$STATUS);
+				}
+				if($DEBUG) { print "Host $name: $disk: Usage = $v\%\n"; }
+			}
+		}
+	}
+	if( $numhosts > 0 ) {
+		if($ITEMS =~ /cpu/) {
+			$totcpu /= $numhosts;
+			$PERFSTATS .= "allcpu=$A\%;;;0;100 ";
+			$A = $totcpu;
+		}
+		if($ITEMS =~ /mem/) {
+			$totmem /= $numhosts;
+			$PERFSTATS .= "allmem=$B\%;;;0;100 ";
+			$B = $totmem;
+		}
 	}
 
+	if($ITEMS =~ /cert/ and !$MRTG) { # meaningless in MRTG mode
+		# Certificate thresholds
+		($w,$c) = getthresh("cert",undef);
+		# retrieve all known certs
+
+		# loop through and test each expiry date
+
+	}
+
+	$MESSAGE = "Environment OK" if(!$MESSAGE);
 }
 
 ########################################################################
@@ -223,8 +383,12 @@ sub checkstack($) {
 
 	if( $data->{state} ne "active" ) {
 		$STATUS = 2;
+		if( $data->{state} =~ /activating|cancel|upgrade|request|rolling-back/ ) {
+			$STATUS = 1;
+		}
+		
 		$MESSAGE = "Environment status: ".$data->{state};
-		$B = 0; # down
+		if($STATUS==2) { $B = 0; } else { $B = 1; }
 		return;
 	}
 	$MESSAGE = "Stack is ".$data->{state};
@@ -246,9 +410,9 @@ sub checkstack($) {
 		$cnt += $json->{data}[$idx]{scale};
 		$MESSAGE .= "\\n* $name : $state";
 		next if($state eq "active");
-		if( $state eq "inactive" ) { $STATUS = 2; next; }
+		if( $state =~ /inactive|remove/ ) { $STATUS = 2; next; }
 		next if($STATUS);
-		if( $state eq "activating" or $state eq "updating-active" ) {
+		if( $state =~ /activating|cancel|register|update|upgrade|rolling/ ) {
 			$STATUS = 1;
 		}
 	}
@@ -268,7 +432,9 @@ GetOptions('h|help','d|debug','M|mrtg|MRTG','N|Nagios|nagios',
     'H|host|rancher_host=s','p|port=i','S|SSL|ssl',
 	'c|config|config_file=s','U|user|username=s',
 	'K|pass|password|key=s','t|timout=i','T|globaltimeout=i',
-	'E|env|environment=s','s|stack=s'
+	'E|env|environment=s','s|stack=s',
+	'i|items=s',
+	'o|obj|object=s','f|fs|filesystem|disk=s'
 	);
 dohelp() if($opt_h);
 $DEBUG=1 if($opt_d);
@@ -285,6 +451,7 @@ $SSL = 1 if($PORT == 443);
 $SSL = $opt_S if(defined $opt_S);
 $ENV = $opt_E if($opt_E);
 $STACK = $opt_s if($opt_s);
+$ITEMS = $opt_i if($opt_i);
 
 $starttime = [gettimeofday];
 
@@ -330,7 +497,7 @@ if(!defined $json->{data}) {
 if(!$ENV) { # API test only
 	$MESSAGE = "API Working Correctly ("
 		.($#{$json->{data}}+1)
-		." environments available)";
+		." environments available to this ID)";
 	$STATUS = 0;
 	output;
 }
@@ -363,7 +530,7 @@ if(!$envid) {
 ######################################################
 # Environment checks
 if(!$STACK) {
-	checkenv($json->{data}[$idx]);
+	checkenv($json->{data}[$idx],$opt_o);
 } else {
 	$URL = "$ENDPOINT/projects/$envid/environments/";
 	$content = fetchurl( $URL, '' );
