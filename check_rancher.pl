@@ -17,7 +17,8 @@ use Getopt::Long;
 use CGI qw( escapeHTML );
 use JSON;
 use Data::Dumper;
-use Time::HiRes qw( usleep ualarm gettimeofday tv_interval );
+#use Time::HiRes qw( usleep ualarm gettimeofday tv_interval );
+use Date::Parse;
 
 my( $VERSION ) = "0.1";
 
@@ -137,10 +138,12 @@ sub fetchurl($$) {
 }
 
 sub dohelp() {
-	print "Usage: check_rancher [-N]|-M][-d][-h]\n             [-c configfile]\n           [-H host][-p port][-S][-U user -K key]\n             [-t timeout][-T globaltimeout]\n             [-E environment][-s stack]\n             [-i itemlist]";
+	print "Usage: check_rancher [-N]|-M][-d][-h]\n             [-c configfile]\n            [-H host][-p port][-S][-U user -K key]\n             [-t timeout][-T globaltimeout]\n             [-E environment [-s stack|-o hostobject]]\n             [-i itemlist]";
 	print "-d : debug\n";
 	print "-M : MRTG mode\n";
 	print "-N : Nagios mode\n";
+	print "-H : Specify Rancher server hostname/IP\n";
+	print "-p : Specify Rancher API port (default 80)\n";
 	print "-S : Use SSL\n";
 	print "-E : Rancher environment\n";
 	print "-s : Rancher stack\n";
@@ -148,6 +151,7 @@ sub dohelp() {
 	print "-i : Comma-separated list of metric items to check. Can include:\n";
 	print "     certificates,cpu,memory,disk,swap\n";
 	print "     This only applies to Environment checks.\n";
+	print "-o : Specify host object.  This is used by MRTG mode.\n";
 	exit 3;
 }
 
@@ -262,16 +266,18 @@ sub checkenv($$) {
 			$totcpu += $v;
 			$v = (int($v*100))/100;
 			if(!$MRTG) {
-			if( $v >= $c ) {
-				$MESSAGE .= "\\nCRIT: Host $name: CPU $v\%";
-				$STATUS = 2;
-			} elsif( $v >= $w ) {
-				$MESSAGE .= "\\nWARN: Host $name: CPU $v\%";
-				$STATUS = 1 if(!$STATUS);
+				if( $v >= $c ) {
+					$MESSAGE .= "\\nCRIT: Host $name: CPU $v\%";
+					$STATUS = 2;
+				} elsif( $v >= $w ) {
+					$MESSAGE .= "\\nWARN: Host $name: CPU $v\%";
+					$STATUS = 1 if(!$STATUS);
+				}
 			}
-			}
-			if($host) {
+			if($host) { 
 				$PERFSTATS .= "cpu=$v\%;$w;$c;0;100 ";
+			} else {
+				$PERFSTATS .= "cpu$name=$v\%;$w;$c;0;100 ";
 			}
 			if($DEBUG) { print "Host $name: CPU = $v\%\n"; }
 		}
@@ -282,16 +288,18 @@ sub checkenv($$) {
 			$totmem += $v;
 			$v = (int($v*100))/100;
 			if(!$MRTG) {
-			if( $v >= $c ) {
-				$MESSAGE .= "\\nCRIT: Host $name: Memory $v\%";
-				$STATUS = 2;
-			} elsif( $v >= $w ) {
-				$MESSAGE .= "\\nWARN: Host $name: Memory $v\%";
-				$STATUS = 1 if(!$STATUS);
-			}
+				if( $v >= $c ) {
+					$MESSAGE .= "\\nCRIT: Host $name: Memory $v\%";
+					$STATUS = 2;
+				} elsif( $v >= $w ) {
+					$MESSAGE .= "\\nWARN: Host $name: Memory $v\%";
+					$STATUS = 1 if(!$STATUS);
+				}
 			} 
 			if($host) {
 				$PERFSTATS .= "mem=$v\%;$w;$c;0;100 ";
+			} else {
+				$PERFSTATS .= "mem$name=$v\%;$w;$c;0;100 ";
 			}
 			if($DEBUG) { print "Host $name: Memory = $v\%\n"; }
 		}
@@ -300,17 +308,19 @@ sub checkenv($$) {
 			($w,$c) = getthresh("load",$json->{data}[$idx]);
 			$v = $info->{cpuInfo}{loadAvg}[1];
 			if(!$MRTG) {
-			if( $v >= $c ) {
-				$MESSAGE .= "\\nCRIT: Host $name: LoadAvg $v";
-				$STATUS = 2;
-			} elsif( $v >= $w ) {
-				$MESSAGE .= "\\nWARN: Host $name: LoadAvg $v";
-				$STATUS = 1 if(!$STATUS);
-			}
+				if( $v >= $c ) {
+					$MESSAGE .= "\\nCRIT: Host $name: LoadAvg $v";
+					$STATUS = 2;
+				} elsif( $v >= $w ) {
+					$MESSAGE .= "\\nWARN: Host $name: LoadAvg $v";
+					$STATUS = 1 if(!$STATUS);
+				}
 			}
 			if($host) {
 				$A = $v; $B = 'U';
 				$PERFSTATS .= "load=$v;$w;$c;0; ";
+			} else {
+				$PERFSTATS .= "load$host=$v;$w;$c;0; ";
 			}
 			if($DEBUG) { print "Host $name: LoadAvg = $v\n"; }
 		}
@@ -320,6 +330,7 @@ sub checkenv($$) {
 		}
 		if($ITEMS =~ /disk/ and !$MRTG) {
 			my(@patterns,$exclude);
+			my($diskprob) = 0;
 			# Disk thresholds; use % on each disk
 			($w,$c) = getthresh("disk",$json->{data}[$idx]);
 			$exclude = $config{"disk.exclude"};
@@ -330,38 +341,67 @@ sub checkenv($$) {
 DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
 				$v = $info->{diskInfo}{mountPoints}{$disk}{percentUsed};
 				foreach ( @patterns ) {
-					next DISK if( $disk =~ /$_/ );
+					next DISK if( $_ and $disk =~ /$_/ );
 				}
 				if( $v >= $c ) {
 					$MESSAGE .= "\\nCRIT: Host $name: $disk: Used $v\%";
-					$STATUS = 2;
+					$STATUS = 2; $diskprob = 1;
 				} elsif( $v >= $w ) {
 					$MESSAGE .= "\\nWARN: Host $name: $disk: Used $v\%";
-					$STATUS = 1 if(!$STATUS);
+					$STATUS = 1 if(!$STATUS); 
+					$diskprob = 1;
 				}
 				if($DEBUG) { print "Host $name: $disk: Usage = $v\%\n"; }
 			}
+			#$MESSAGE .= "\\nAll disks on $name OK" if(!$diskprob);
 		}
 	}
 	if( $numhosts > 0 ) {
 		if($ITEMS =~ /cpu/) {
 			$totcpu /= $numhosts;
-			$PERFSTATS .= "allcpu=$A\%;;;0;100 ";
 			$A = $totcpu;
+			$PERFSTATS = "allcpu=$totcpu\%;;;0;100 $PERFSTATS";
 		}
 		if($ITEMS =~ /mem/) {
 			$totmem /= $numhosts;
-			$PERFSTATS .= "allmem=$B\%;;;0;100 ";
 			$B = $totmem;
+			$PERFSTATS = "allmem=$totmem\%;;;0;100 $PERFSTATS";
 		}
 	}
+	$PERFSTATS .= "hosts=$numhosts ";
 
 	if($ITEMS =~ /cert/ and !$MRTG) { # meaningless in MRTG mode
 		# Certificate thresholds
 		($w,$c) = getthresh("cert",undef);
 		# retrieve all known certs
+		$url = "$ENDPOINT/projects/$envid/certificates/";
+		$json = decode_json( fetchurl( $url, '' ) );
+		if(!$json) {
+			$STATUS = 3; $MESSAGE = "API error"; return;
+		}
 
 		# loop through and test each expiry date
+		foreach my $cert ( @{$json->{data}} ) {	
+			next if($cert->{type} ne "certificate");
+			next if($cert->{state} ne "active");
+			my($cn) = $cert->{CN};
+			my($expires) = str2time($cert->{expiresAt});
+			if($expires< time ) {
+				$STATUS = 2;
+				$MESSAGE .= "\\nCertificate $cn has expired!";
+				next;
+			}
+			my($daysleft) = ($expires-time)/(24*3600);
+			if($daysleft <= $c ) {
+				$STATUS = 2;
+				$MESSAGE .= "\\nCertificate $cn expires in $daysleft days";
+				next;
+			} elsif( $daysleft <= $w ) {
+				$STATUS = 1 if(!$STATUS);
+				$MESSAGE .= "\\nCertificate $cn expires in $daysleft days";
+				next;
+			}
+		}
 
 	}
 
@@ -453,7 +493,7 @@ $ENV = $opt_E if($opt_E);
 $STACK = $opt_s if($opt_s);
 $ITEMS = $opt_i if($opt_i);
 
-$starttime = [gettimeofday];
+#$starttime = [gettimeofday];
 
 # Create and set up the useragent
 $ua = LWP::UserAgent->new;
@@ -555,11 +595,11 @@ if(!$STACK) {
 	checkstack($json->{data}[$idx]);
 }
 
-if(tv_interval($starttime)>=$GTIMEOUT ) {
-	$STATUS = 3;
-	$MESSAGE = "Global timeout reached.";
-	output;
-}
+#if(tv_interval($starttime)>=$GTIMEOUT ) {
+#	$STATUS = 3;
+#	$MESSAGE = "Global timeout reached.";
+#	output;
+#}
 
 # exit
 output;
