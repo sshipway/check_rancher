@@ -320,7 +320,7 @@ sub checkenv($$) {
 				$A = $v; $B = 'U';
 				$PERFSTATS .= "load=$v;$w;$c;0; ";
 			} else {
-				$PERFSTATS .= "load$host=$v;$w;$c;0; ";
+				$PERFSTATS .= "load$name=$v;$w;$c;0; ";
 			}
 			if($DEBUG) { print "Host $name: LoadAvg = $v\n"; }
 		}
