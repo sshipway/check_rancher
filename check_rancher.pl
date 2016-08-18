@@ -592,7 +592,7 @@ if(!$STACK) {
 		$MESSAGE = "Stack '$STACK' unknown in environment '$ENV'";
 		output;
 	}
-	checkstack($json->{data}[$idx]);
+	checkstack($stkid);
 }
 
 #if(tv_interval($starttime)>=$GTIMEOUT ) {
