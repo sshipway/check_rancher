@@ -583,7 +583,7 @@ if(!$STACK) {
 	my($stkid) = 0;
 	foreach my $idx ( 0..$#{$json->{data}} ) {
 		if( $json->{data}[$idx]{name} eq $STACK ) {
-			$stkid = $json->{data}[$idx]{id};
+			$stkid = $json->{data}[$idx]; # should pass hash, not just ID (frisbee23)
 			last;
 		}
 	}
