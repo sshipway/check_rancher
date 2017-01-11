@@ -580,19 +580,19 @@ if(!$STACK) {
 		$MESSAGE = "Unexpected JSON returned";
 		output;
 	}
-	my($stkid) = 0;
+	my($stk) = 0;
 	foreach my $idx ( 0..$#{$json->{data}} ) {
 		if( $json->{data}[$idx]{name} eq $STACK ) {
-			$stkid = $json->{data}[$idx]; # should pass hash, not just ID (frisbee23)
+			$stk = $json->{data}[$idx]; # should pass hash, not just ID (frisbee23)
 			last;
 		}
 	}
-	if(!$stkid) {
+	if(!$stk) {
 		$STATUS = 2;
 		$MESSAGE = "Stack '$STACK' unknown in environment '$ENV'";
 		output;
 	}
-	checkstack($stkid);
+	checkstack($stk);
 }
 
 #if(tv_interval($starttime)>=$GTIMEOUT ) {
