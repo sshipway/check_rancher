@@ -492,6 +492,7 @@ $SSL = $opt_S if(defined $opt_S);
 $ENV = $opt_E if($opt_E);
 $STACK = $opt_s if($opt_s);
 $ITEMS = $opt_i if($opt_i);
+$HOSTNAME = $opt_H if($opt_H);
 
 #$starttime = [gettimeofday];
 
