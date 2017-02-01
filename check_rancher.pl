@@ -350,6 +350,11 @@ DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
 					$STATUS = 1 if(!$STATUS); 
 					$diskprob = 1;
 				}
+			        if($host) { 
+				        $PERFSTATS .= "$disk=$v\%;$w;$c;0;100 ";
+			        } else {
+				        $PERFSTATS .= "$name:$disk=$v\%;$w;$c;0;100 ";
+		 	        }
 				if($DEBUG) { print "Host $name: $disk: Usage = $v\%\n"; }
 			}
 			#$MESSAGE .= "\\nAll disks on $name OK" if(!$diskprob);
