@@ -338,7 +338,7 @@ sub checkenv($$$) {
 			$exclude = "" if(!$exclude);
 			@patterns = split( /\s*,\s*/,$exclude );
 DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
-				$v = $info->{diskInfo}{mountPoints}{$disk}{percentUsed};
+				$v = $info->{diskInfo}{mountPoints}{$disk}{percentage};
 				foreach ( @patterns ) {
 					next DISK if( $_ and $disk =~ /$_/ );
 				}
