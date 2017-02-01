@@ -212,14 +212,13 @@ sub getthresh($$) {
 }
 
 ########################################################################
-sub checkenv($$) {
+sub checkenv($$$) {
 	my( $data ) = $_[0];
 	my( $host ) = $_[1];
-	my( $envid ) = $data->{id};
+	my( $envid ) = $_[2];
 	my($json,$url);
 	my( $w, $c );
 	my( $totcpu, $totmem, $numhosts ) = (0,0);
-
 	$STATUS = 0;
 	$MESSAGE = "";
 
@@ -571,7 +570,7 @@ if(!$envid) {
 ######################################################
 # Environment checks
 if(!$STACK) {
-	checkenv($json->{data}[$idx],$opt_o);
+	checkenv($json->{data}[$idx],$opt_o,$envid);
 } else {
 	$URL = "$ENDPOINT/projects/$envid/environments/";
 	$content = fetchurl( $URL, '' );
