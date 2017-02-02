@@ -283,7 +283,7 @@ sub checkenv($$$) {
 		if($ITEMS =~ /mem/) {
 			# MEM usage threshold; use %
 			($w,$c) = getthresh("mem",$json->{data}[$idx]);
-			$v = 100.0 - (($info->{memoryInfo}{memFree}/$info->{memoryInfo}{memTotal})*100.0);
+			$v = 100.0 - (($info->{memoryInfo}{memAvailable}/$info->{memoryInfo}{memTotal})*100.0);
 			$totmem += $v;
 			$v = (int($v*100))/100;
 			if(!$MRTG) {
