@@ -24,21 +24,20 @@ than having a separate object for each Environment host.
 Default thresholds can be set in the config file (if you use one); you can 
 override these on a per-Host basis using Labels like: nagios.cpu.warn=80
 
-Usage: check_rancher [-N|-M][-d][-h]
+    Usage: check_rancher [-N|-M][-d][-h]
              [-c configfile]
              [-H host][-p port][-S][-U user -K key]
              [-t timeout][-T globaltimeout]
              [-E environment][-s stack]
              [-i itemlist]
 
--d : debug
--M : MRTG mode
--N : Nagios mode
--S : Use SSL
--E : Rancher environment
--s : Rancher stack
--c : Specify configuration file
--i : Comma-separated list of metric items to check. Can include:
+    -d : debug
+    -M : MRTG mode
+    -N : Nagios mode
+    -S : Use SSL
+    -E : Rancher environment
+    -s : Rancher stack
+    -c : Specify configuration file
+    -i : Comma-separated list of metric items to check. Can include:
      certificates,cpu,memory,disk,swap
      This only applies to Environment checks.
-
