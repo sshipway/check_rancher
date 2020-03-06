@@ -212,14 +212,13 @@ sub getthresh($$) {
 }
 
 ########################################################################
-sub checkenv($$) {
+sub checkenv($$$) {
 	my( $data ) = $_[0];
 	my( $host ) = $_[1];
-	my( $envid ) = $data->{id};
+	my( $envid ) = $_[2];
 	my($json,$url);
 	my( $w, $c );
 	my( $totcpu, $totmem, $numhosts ) = (0,0);
-
 	$STATUS = 0;
 	$MESSAGE = "";
 
@@ -284,7 +283,7 @@ sub checkenv($$) {
 		if($ITEMS =~ /mem/) {
 			# MEM usage threshold; use %
 			($w,$c) = getthresh("mem",$json->{data}[$idx]);
-			$v = 100.0 - (($info->{memoryInfo}{memFree}/$info->{memoryInfo}{memTotal})*100.0);
+			$v = 100.0 - (($info->{memoryInfo}{memAvailable}/$info->{memoryInfo}{memTotal})*100.0);
 			$totmem += $v;
 			$v = (int($v*100))/100;
 			if(!$MRTG) {
@@ -339,7 +338,7 @@ sub checkenv($$) {
 			$exclude = "" if(!$exclude);
 			@patterns = split( /\s*,\s*/,$exclude );
 DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
-				$v = $info->{diskInfo}{mountPoints}{$disk}{percentUsed};
+				$v = $info->{diskInfo}{mountPoints}{$disk}{percentage};
 				foreach ( @patterns ) {
 					next DISK if( $_ and $disk =~ /$_/ );
 				}
@@ -351,6 +350,11 @@ DISK:		foreach my $disk ( keys %{$info->{diskInfo}{mountPoints}} ) {
 					$STATUS = 1 if(!$STATUS); 
 					$diskprob = 1;
 				}
+			        if($host) { 
+				        $PERFSTATS .= "$disk=$v\%;$w;$c;0;100 ";
+			        } else {
+				        $PERFSTATS .= "$name:$disk=$v\%;$w;$c;0;100 ";
+		 	        }
 				if($DEBUG) { print "Host $name: $disk: Usage = $v\%\n"; }
 			}
 			#$MESSAGE .= "\\nAll disks on $name OK" if(!$diskprob);
@@ -492,6 +496,7 @@ $SSL = $opt_S if(defined $opt_S);
 $ENV = $opt_E if($opt_E);
 $STACK = $opt_s if($opt_s);
 $ITEMS = $opt_i if($opt_i);
+$HOSTNAME = $opt_H if($opt_H);
 
 #$starttime = [gettimeofday];
 
@@ -570,7 +575,7 @@ if(!$envid) {
 ######################################################
 # Environment checks
 if(!$STACK) {
-	checkenv($json->{data}[$idx],$opt_o);
+	checkenv($json->{data}[$idx],$opt_o,$envid);
 } else {
 	$URL = "$ENDPOINT/projects/$envid/environments/";
 	$content = fetchurl( $URL, '' );
